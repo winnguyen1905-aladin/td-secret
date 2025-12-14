@@ -1,6 +1,6 @@
 // Gateways
 export { BaseGateway } from './messaging-base.gateway';
-export { ChatGateway } from './messaging.gateway';
+export { MessagingGateway } from './messaging.gateway';
 
 // Types
 export * from './types';

@@ -5,8 +5,8 @@ import { Redis } from 'ioredis';
 import { MessageJobData, QUEUE_CONFIG } from './message-job.dto';
 
 interface MessageJob {
-  eventType: string;
-  data: MessageJobData;
+  value: { eventType: string; data: MessageJobData };
+  headers: Record<string, string>;
   timestamp: number;
 }
 
@@ -14,8 +14,9 @@ interface MessageJob {
 export class MessageProducerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MessageProducerService.name);
   private queue!: Queue<MessageJob>;
-  private readonly IDEMPOTENCY_PREFIX = 'msg:idem:';
-  private readonly IDEMPOTENCY_TTL = 3600;
+  // Idempotency key namespace
+  private readonly IDEMPOTENCY_PREFIX = "idempotency:message:";
+  private readonly IDEMPOTENCY_TTL = 3600; // 1 hour in seconds
 
   constructor(
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
@@ -31,9 +32,17 @@ export class MessageProducerService implements OnModuleInit, OnModuleDestroy {
       },
       defaultJobOptions: {
         attempts: QUEUE_CONFIG.MAX_RETRY,
-        backoff: { type: 'exponential', delay: QUEUE_CONFIG.RETRY_DELAY },
-        removeOnComplete: { age: 3600, count: 1000 },
-        removeOnFail: { age: 86400 },
+        backoff: {
+          type: "exponential",
+          delay: QUEUE_CONFIG.RETRY_DELAY,
+        },
+        removeOnComplete: {
+          age: 3600,
+          count: 1000,
+        },
+        removeOnFail: {
+          age: 86400,
+        },
       },
     });
 
@@ -46,26 +55,92 @@ export class MessageProducerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('Queue closed');
   }
 
-  async queueMessage(data: MessageJobData): Promise<{ jobId: string; isDuplicate: boolean }> {
-    const key = `${this.IDEMPOTENCY_PREFIX}${data.id}`;
+   /**
+   * Mark message as processed with result
+   */
+  async markMessageProcessed(
+    idempotencyKey: string,
+    result: { jobId: string; timestamp: number }
+  ): Promise<void> {
+    const key = `${this.IDEMPOTENCY_PREFIX}${idempotencyKey}`;
+    await this.redis.setex(
+      key,
+      this.IDEMPOTENCY_TTL,
+      JSON.stringify(result)
+    );
+  }
 
-    // Idempotency check
+  /**
+   * Check if message was already processed (idempotency check)
+   */
+  async isMessageProcessed(idempotencyKey: string): Promise<boolean> {
+    const key = `${this.IDEMPOTENCY_PREFIX}${idempotencyKey}`;
+    const exists = await this.redis.exists(key);
+    return exists === 1;
+  }
+  /**
+ * Get cached result for duplicate request
+ */
+  async getCachedResult(idempotencyKey: string): Promise<any | null> {
+    const key = `${this.IDEMPOTENCY_PREFIX}${idempotencyKey}`;
     const cached = await this.redis.get(key);
-    if (cached) {
-      return { jobId: JSON.parse(cached).jobId, isDuplicate: true };
+    return cached ? JSON.parse(cached) : null;
+  }
+  /**
+   * Generate idempotency key
+   */
+  private generateIdempotencyKey(
+    data: Omit<MessageJobData, "timestamp">
+  ): string {
+    return data.id;
+  }
+
+  async queueMessage(data: MessageJobData): Promise<{
+    jobId: string;
+    isDuplicate: boolean;
+  }> {
+    const idempotencyKey = this.generateIdempotencyKey(data);
+
+    // >>> 🔒 IDEMPOTENCY CHECK: Check if already processed
+    const alreadyProcessed = await this.isMessageProcessed(idempotencyKey);
+    if (alreadyProcessed) {
+      const cachedResult = await this.getCachedResult(idempotencyKey);
+      return {
+        isDuplicate: true,
+        jobId: cachedResult?.jobId || idempotencyKey,
+      };
     }
 
-    const job = await this.queue.add(`message.created`, {
-      eventType: 'message.created',
-      data,
+    const jobData: MessageJobData = { ...data, };
+    const job = await this.queue.add(`message.created.${data.id}`, {
+      value: {
+        eventType: 'message.created',
+        data: jobData
+      },
+      headers: {
+        'content-type': 'application/json',
+        'event-type': 'message.created',
+        'test-run': 'true',
+      },
       timestamp: Date.now(),
     }, {
+      deduplication: {
+        ttl: 5000,
+        id: data.id,
+      },
       jobId: data.id,
-      deduplication: { id: data.id, ttl: 5000 },
     });
 
-    await this.redis.setex(key, this.IDEMPOTENCY_TTL, JSON.stringify({ jobId: job.id }));
-    return { jobId: job.id!, isDuplicate: false };
+    // >>> ✅ IDEMPOTENCY TRACKING: Mark as processed with result
+    await this.markMessageProcessed(data.id, {
+      jobId: job.id!,
+      timestamp: Date.now(),
+    });
+    
+    return {
+      jobId: job.id!,
+      isDuplicate: false,
+    };
   }
 
   async getMetrics() {

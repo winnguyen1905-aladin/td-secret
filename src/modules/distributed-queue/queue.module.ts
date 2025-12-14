@@ -1,11 +1,14 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MessageProducerService } from './message-producer.service';
 import { NotificationConsumerService } from './message-consumer.service';
+import { NotificationEmitterService } from './notification-emitter.service';
+import { MessagingModule } from '../messaging';
 
 @Module({
   imports: [
+    forwardRef(() => MessagingModule),
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -24,10 +27,12 @@ import { NotificationConsumerService } from './message-consumer.service';
   ],
   providers: [
     MessageProducerService,
+    NotificationEmitterService,
     NotificationConsumerService,
   ],
   exports: [
     MessageProducerService,
+    NotificationEmitterService,
     NotificationConsumerService,
   ],
 })

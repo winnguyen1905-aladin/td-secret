@@ -25,7 +25,7 @@ export abstract class BaseGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  protected server: Server;
+  public server: Server;
 
   protected readonly logger = new Logger(this.constructor.name);
 

@@ -12,7 +12,7 @@ import { DistributedLockService } from '../distributed-cache/distributed-lock.se
 
 @Injectable()
 @WebSocketGateway({ namespace: '/chat', cors: { origin: '*' } })
-export class ChatGateway extends BaseGateway {
+export class MessagingGateway extends BaseGateway {
   constructor(
     private readonly messageProducer: MessageProducerService,
     private readonly _userSessionCache: UserSessionCacheService,
@@ -36,12 +36,12 @@ export class ChatGateway extends BaseGateway {
     @MessageBody() payload: ChatMessageSendPayload,
     @AccountRequest() user: JwtUser,
   ) {
-    const { jobId, timestamp } = payload;
+    const { jobId } = payload;
 
     if (!jobId) return err('jobId is required');
     if (!payload.encryptedContent?.body) return err('Message cannot be empty');
 
-    return this.lockService.withLock(jobId, async () => {
+    const result = await this.lockService.tryWithLock(jobId, async () => {
       try {
         const messageData: Message = {
           type: 'TEXT',
@@ -56,9 +56,9 @@ export class ChatGateway extends BaseGateway {
         };
 
         // 1: Push to BullMQ for async persistence
-        const result = await this.messageProducer.queueMessage({ ...messageData, metadata: {} });
+        const queued = await this.messageProducer.queueMessage({ ...messageData, metadata: {} });
 
-        if (result.isDuplicate) {
+        if (queued.isDuplicate) {
           return ok({ delivered: true, duplicate: true, messageId: messageData.id });
         }
 
@@ -72,6 +72,12 @@ export class ChatGateway extends BaseGateway {
         return { success: false, error: error.message || 'Failed to send message' };
       }
     });
+
+    if (result === null) {
+      return err('RESOURCE_BUSY');
+    }
+
+    return result;
   }
 
   @WsAuth()
@@ -98,10 +104,16 @@ export class ChatGateway extends BaseGateway {
     const { jobId, timestamp = Date.now(), messageId, roomId } = payload;
     if (!jobId) return err('jobId is required');
 
-    return this.lockService.withLock(jobId, async () => {
+    const result = await this.lockService.tryWithLock(jobId, async () => {
       this.emitToRoom(jobId, 'contract:message.pinned', { messageId, roomId, pinnedBy: user.sub, timestamp });
       return ok({ messageId, pinned: true });
     });
+
+    if (result === null) {
+      return err('RESOURCE_BUSY');
+    }
+
+    return result;
   }
 
   @WsAuth()
@@ -114,10 +126,16 @@ export class ChatGateway extends BaseGateway {
     const { jobId, timestamp = Date.now(), messageId, roomId } = payload;
     if (!jobId) return err('jobId is required');
 
-    return this.lockService.withLock(jobId, async () => {
+    const result = await this.lockService.tryWithLock(jobId, async () => {
       this.emitToRoom(jobId, 'contract:message.unpinned', { messageId, roomId, unpinnedBy: user.sub, timestamp });
       return ok({ messageId, pinned: false });
     });
+
+    if (result === null) {
+      return err('RESOURCE_BUSY');
+    }
+
+    return result;
   }
 
   @WsAuth()
@@ -143,10 +161,16 @@ export class ChatGateway extends BaseGateway {
     const { jobId, timestamp = Date.now(), messageId, roomId } = payload;
     if (!jobId) return err('jobId is required');
 
-    return this.lockService.withLock(jobId, async () => {
+    const result = await this.lockService.tryWithLock(jobId, async () => {
       this.emitToRoom(jobId, 'contract:message.read', { messageId, roomId, readBy: user.sub, timestamp });
       return ok({ messageId, read: true });
     });
+
+    if (result === null) {
+      return err('RESOURCE_BUSY');
+    }
+
+    return result;
   }
 
   // ============================================================

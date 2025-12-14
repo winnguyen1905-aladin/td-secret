@@ -1,10 +1,10 @@
-import { Module } from '@nestjs/common';
-import { ChatGateway } from './messaging.gateway';
+import { forwardRef, Module } from '@nestjs/common';
+import { MessagingGateway } from './messaging.gateway';
 import { QueueModule } from '../distributed-queue/queue.module';
 
 @Module({
-  imports: [QueueModule],
-  providers: [ChatGateway],
-  exports: [ChatGateway],
+  imports: [forwardRef(() => QueueModule)],
+  providers: [MessagingGateway],
+  exports: [MessagingGateway],
 })
 export class MessagingModule {}
