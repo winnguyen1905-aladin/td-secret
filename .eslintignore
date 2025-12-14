@@ -1,0 +1,16 @@
+# Build scripts
+prisma/build-schema.js
+prisma/prisma-setup.js
+
+# Build output
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Generated files
+*.d.ts
+
+# Prisma generated file (auto-generated, don't lint)
+prisma/schema.prisma

@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+coverage/
+
+# Prisma generated file (auto-generated, don't format)
+prisma/schema.prisma
+prisma/schema.prisma.backup
+
+# Optional: uncomment if you want to disable auto-format for schema partials
+# prisma/schemas/**/*.prisma
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
