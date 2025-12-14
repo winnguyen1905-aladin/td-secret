@@ -119,7 +119,7 @@ const appConfig: AppConfig = {
 	webRtcTransport: {
 		listenIps: [
 			{
-				ip: '127.0.0.1',
+				ip: '0.0.0.0',
 				announcedIp: process.env.PUBLIC_IP || null,
 			},
 		],
