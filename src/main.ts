@@ -11,7 +11,7 @@ async function bootstrap() {
   // Enable shutdown hooks so onModuleDestroy lifecycle hooks are called
   app.enableShutdownHooks();
 
-  const port = configService.get<number>('PORT', 3000);
+  const port = configService.get<number>('PORT', 8090);
 
   await app.listen(port, '127.0.0.1');
   console.log(`Application is running on: http://localhost:${port}`);
