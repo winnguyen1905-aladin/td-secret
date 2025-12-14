@@ -11,7 +11,16 @@ import { UserSessionCacheService } from '../distributed-cache/session.service';
 import { DistributedLockService } from '../distributed-cache/distributed-lock.service';
 
 @Injectable()
-@WebSocketGateway({ namespace: '/chat', cors: { origin: '*' } })
+@WebSocketGateway({
+  namespace: '/chat',
+  cors: {
+    origin: [
+      /^http:\/\/localhost(?::\d+)?$/,
+      /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
+      /^https:\/\/([a-z0-9-]+\.)*aladin\.work(?::\d+)?$/i,
+    ],
+  },
+})
 export class MessagingGateway extends BaseGateway {
   constructor(
     private readonly messageProducer: MessageProducerService,

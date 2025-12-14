@@ -25,7 +25,13 @@ import { randomUUID } from 'crypto';
 
 @WebSocketGateway({
   namespace: '',
-  cors: { origin: '*' },
+  cors: {
+    origin: [
+      /^http:\/\/localhost(?::\d+)?$/,
+      /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
+      /^https:\/\/([a-z0-9-]+\.)*aladin\.work(?::\d+)?$/i,
+    ],
+  },
 })
 export class StreamingGateway extends CallBaseGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   constructor(private readonly callService: StreamingService) {
