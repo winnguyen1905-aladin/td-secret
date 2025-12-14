@@ -124,13 +124,13 @@ const appConfig: AppConfig = {
 			},
 		],
 		// For a typical video stream with HD quality, you might set maxIncomingBitrate
-		// around 5 Mbps (5000 kbps) to balance quality and bandwidth.
+		// around 100 Mbps (100000 kbps) to balance quality and bandwidth.
 		// 4K Ultra HD: 15 Mbps to 25 Mbps
-		maxIncomingBitrate: 5000000, // 5 Mbps, default is INF
-		initialAvailableOutgoingBitrate: 1000000, // 1 Mbps, reduced for smoother BWE ramp-up
-		minimumAvailableOutgoingBitrate: 500000, // 500 kbps minimum bandwidth
+		maxIncomingBitrate: 100000000, // 100 Mbps, default is INF
+		initialAvailableOutgoingBitrate: 1000000000, // 100 Mbps, reduced for smoother BWE ramp-up
+		minimumAvailableOutgoingBitrate: 100000000, // 100 Mbps minimum bandwidth
 		enableUdp: true, // Enable UDP for lower latency
-		enableTcp: false, // Disable TCP for better performance
+		enableTcp: true, // Disable TCP for better performance
 		preferUdp: true, // Prefer UDP over TCP
 	},
 	roomSettings: {
