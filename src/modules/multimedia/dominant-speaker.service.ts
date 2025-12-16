@@ -15,7 +15,6 @@ export interface DominantSpeakerInfo {
 
 @Injectable()
 export class DominantSpeakerService {
-
 	private readonly logger = new Logger(DominantSpeakerService.name);
 	constructor(
 		@Inject(forwardRef(() => StreamingGateway))

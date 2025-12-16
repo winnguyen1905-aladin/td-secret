@@ -9,10 +9,10 @@ export interface LockOptions {
   retryJitter?: number;
 }
 
-const DEFAULT_LOCK_DURATION = 10000; // 10 seconds
 const DEFAULT_RETRY_COUNT = 10;
 const DEFAULT_RETRY_DELAY = 200; // 200ms
 const DEFAULT_RETRY_JITTER = 100; // 100ms
+const DEFAULT_LOCK_DURATION = 10000; // 10 seconds
 
 @Injectable()
 export class DistributedLockService implements OnModuleInit, OnModuleDestroy {

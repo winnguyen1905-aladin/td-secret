@@ -46,15 +46,12 @@ export class NotificationConsumerService implements OnModuleInit, OnModuleDestro
     this.worker.on('failed', (job, err) => this.logger.error(`Job ${job?.id} failed: ${err.message}`));
     this.worker.on('error', (err) => this.logger.error('Worker error:', err));
 
-    console.log(`[NotificationConsumer] ✅ Initialized`);
-    console.log(`  📦 Queue: ${QUEUE_NAMES.NOTIFICATIONS}`);
-    console.log(`  🔄 Concurrency: ${NOTIFICATION_QUEUE_CONFIG.CONCURRENCY}`);
-    console.log(`  📡 Redis: ${NOTIFICATION_QUEUE_CONFIG.REDIS_HOST}:${NOTIFICATION_QUEUE_CONFIG.REDIS_PORT}`);
+    this.logger.log(`Queue "${QUEUE_NAMES.NOTIFICATIONS}" initialized`);
   }
 
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close();
-    console.log(`[NotificationConsumer] ❌ Closed`);
+    this.logger.log(`Queue "${QUEUE_NAMES.NOTIFICATIONS}" closed`);
     this.logger.log('Consumer closed');
   }
 
@@ -65,7 +62,7 @@ export class NotificationConsumerService implements OnModuleInit, OnModuleDestro
     const notification = job.data;
     const { eventType, eventId } = notification;
 
-    console.log(`[NotificationConsumer] Processing job ${job.id} - ${eventType} (${eventId})`);
+    this.logger.log(`Processing job ${job.id} - ${eventType} (${eventId})`);
 
     try {
       switch (eventType) {
@@ -74,12 +71,12 @@ export class NotificationConsumerService implements OnModuleInit, OnModuleDestro
           break;
 
         default:
-          console.warn(`[NotificationConsumer] Unknown event type: ${eventType}`);
+          this.logger.warn(`Unknown event type: ${eventType}`);
       }
 
-      console.log(`[NotificationConsumer] ✅ Job ${job.id} processed successfully`);
+      this.logger.log(`Job ${job.id} processed successfully`);
     } catch (error) {
-      console.error(`[NotificationConsumer] ❌ Failed to process job ${job.id}:`, error);
+      this.logger.error(`Failed to process job ${job.id}:`, error);
       throw error; // Re-throw to trigger retry
     }
   }
@@ -91,8 +88,8 @@ export class NotificationConsumerService implements OnModuleInit, OnModuleDestro
     const { data } = notification;
     const { jobId, previousStatus, newStatus, transactions } = data;
 
-    console.log(
-      `[NotificationConsumer] Job status updated: ${jobId} (${previousStatus} → ${newStatus})`,
+    this.logger.log(
+      `Job status updated: ${jobId} (${previousStatus} → ${newStatus})`,
       `Transactions: ${transactions.length}`
     );
 

@@ -33,14 +33,13 @@ export interface Producer {
 }
 
 export class Client {
-
   public userId: string;
   public displayName: string
+  public producer: Producer = {};
+  public room: Room | null = null;
   public socket: AuthenticatedSocket;
   public downstreamTransports: DownstreamTransport[] = [];
   public upstreamTransport: mediasoup.types.WebRtcTransport | null = null;
-  public producer: Producer = {};
-  public room: Room | null = null;
 
   constructor(userId: string, socket: AuthenticatedSocket, displayName?: string) {
     this.userId = userId;
