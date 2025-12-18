@@ -42,8 +42,10 @@ export interface STTConfig {
   segmentDuration: number; // seconds
   audioDir: string;
   transcriptDir: string; // Directory to save transcript files
-  whisperBinaryPath: string;
-  whisperModelPath: string;
+  whisperScriptPath: string; // Path to Python Whisper script
+  whisperModel: string; // Whisper model size (tiny, base, small, medium, large-v2, large-v3)
+  whisperDevice: string; // Device (cpu, cuda, auto)
+  whisperComputeType: string; // Compute type (int8, int16, float16, float32)
   language: 'vi' | 'en' | 'auto';
   enableCleanup: boolean;
 }
@@ -67,21 +69,22 @@ export class StreamingSTTService {
   
   // Configuration
   private config: STTConfig = {
-    segmentDuration: 6, // 6 seconds for faster testing (was 60)
+    segmentDuration: 30, // 6 seconds for faster testing (was 60)
     audioDir: './temp/audio-segments',
     transcriptDir: './temp/transcripts',
-    whisperBinaryPath: '/home/loi/whisper.cpp/whisper.cpp/build/bin/whisper-cli',
-    whisperModelPath: '/home/loi/whisper.cpp/whisper.cpp/ggml-base.bin',
+    whisperScriptPath: path.resolve(process.cwd(), 'scripts/run_whisper.sh'), // Use wrapper script from project root
+    whisperModel: 'large-v3', // Whisper model size
+    whisperDevice: 'cpu', // Use CPU (CUDA not available)
+    whisperComputeType: 'float32', // Use float32 for better accuracy
     language: 'vi',
-    enableCleanup: true
+    enableCleanup: false // Disabled to keep audio files
   };
 
   constructor(
     @Inject(forwardRef(() => StreamingGateway))
     private readonly streamingGateway: StreamingGateway
   ) {
-    this.initializeAudioDirectory();
-    this.initializeTranscriptDirectory();
+    this.initializeBaseDirectories();
     this.initializeFileWatcher();
     this.initializePortPool();
   }
@@ -105,6 +108,9 @@ export class StreamingSTTService {
         this.logger.warn(`STT already active for participant ${participantId}`);
         return;
       }
+
+      // Initialize room audio directory
+      await this.initializeRoomAudioDirectory(roomId);
 
       // 1. Get a port pair for FFmpeg to listen on (RTP and RTCP)
       const { rtpPort, rtcpPort } = await this.getAvailablePortPair();
@@ -252,14 +258,42 @@ export class StreamingSTTService {
   }
 
   /**
-   * Initialize audio directory
+   * Get room-specific audio directory
    */
-  private async initializeAudioDirectory(): Promise<void> {
+  private getRoomAudioDir(roomId: string): string {
+    return path.join(this.config.audioDir, roomId);
+  }
+
+  /**
+   * Get room-specific transcript directory
+   */
+  private getRoomTranscriptDir(roomId: string): string {
+    return path.join(this.config.transcriptDir, roomId);
+  }
+
+  /**
+   * Initialize audio directory for a specific room
+   */
+  private async initializeRoomAudioDirectory(roomId: string): Promise<void> {
     try {
-      await fs.mkdir(this.config.audioDir, { recursive: true });
-      this.logger.log(`Audio directory initialized: ${this.config.audioDir}`);
+      const roomAudioDir = this.getRoomAudioDir(roomId);
+      await fs.mkdir(roomAudioDir, { recursive: true });
+      this.logger.debug(`Room audio directory initialized: ${roomAudioDir}`);
     } catch (error) {
-      this.logger.error('Failed to create audio directory:', error);
+      this.logger.error(`Failed to create room audio directory for ${roomId}:`, error);
+    }
+  }
+
+  /**
+   * Initialize transcript directory for a specific room
+   */
+  private async initializeRoomTranscriptDirectory(roomId: string): Promise<void> {
+    try {
+      const roomTranscriptDir = this.getRoomTranscriptDir(roomId);
+      await fs.mkdir(roomTranscriptDir, { recursive: true });
+      this.logger.debug(`Room transcript directory initialized: ${roomTranscriptDir}`);
+    } catch (error) {
+      this.logger.error(`Failed to create room transcript directory for ${roomId}:`, error);
     }
   }
 
@@ -286,9 +320,10 @@ export class StreamingSTTService {
    * Start FFmpeg process to capture RTP and create segments
    */
   private async startFFmpegCapture(session: RTPSession): Promise<void> {
+    const roomAudioDir = this.getRoomAudioDir(session.roomId);
     const outputPattern = path.join(
-      this.config.audioDir,
-      `${session.roomId}_${session.participantId}_segment_%03d.wav`
+      roomAudioDir,
+      `${session.participantId}_segment_%03d.wav`
     );
 
     // Create SDP file to describe the RTP stream (Opus, Payload Type 100)
@@ -302,8 +337,8 @@ a=rtpmap:100 opus/48000/2
 `;
 
     const sdpFilePath = path.join(
-      this.config.audioDir,
-      `${session.roomId}_${session.participantId}.sdp`
+      roomAudioDir,
+      `${session.participantId}.sdp`
     );
     session.sdpFilePath = sdpFilePath;
 
@@ -312,8 +347,8 @@ a=rtpmap:100 opus/48000/2
 
     // Create segment list file path
     const segmentListPath = path.join(
-      this.config.audioDir,
-      `${session.roomId}_${session.participantId}_segments.txt`
+      roomAudioDir,
+      `${session.participantId}_segments.txt`
     );
     session.segmentListPath = segmentListPath;
     session.lastProcessedSegment = -1;
@@ -367,14 +402,19 @@ a=rtpmap:100 opus/48000/2
         return;
       }
 
+      // Extract room ID from the file path and participant ID from filename
+      // New path structure: ./temp/audio-segments/{roomId}/{participantId}_segments.txt
+      const pathParts = path.dirname(filePath).split(path.sep);
+      const roomId = pathParts[pathParts.length - 1]; // Last directory is roomId
+      
       const filename = path.basename(filePath);
-      const match = filename.match(/^(.+)_(.+)_segments\.txt$/);
+      const match = filename.match(/^(.+)_segments\.txt$/);
       
       if (!match) {
         return;
       }
 
-      const [, roomId, participantId] = match;
+      const [, participantId] = match;
       
       // Get the session to track progress
       const session = this.rtpSessions.get(participantId);
@@ -399,8 +439,9 @@ a=rtpmap:100 opus/48000/2
         if (segmentIndex > session.lastProcessedSegment && !session.processingSegments.has(segmentIndex)) {
           session.processingSegments.add(segmentIndex);
           
-          // Use basename to ensure we build the correct path regardless of what FFmpeg put in the list
-          const audioFilePath = path.join(this.config.audioDir, path.basename(line.trim()));
+          // Build correct path using room audio directory
+          const roomAudioDir = this.getRoomAudioDir(roomId);
+          const audioFilePath = path.join(roomAudioDir, path.basename(line.trim()));
           
           this.logger.log(`Processing new segment index ${segmentIndex}: ${line}`);
           
@@ -414,10 +455,8 @@ a=rtpmap:100 opus/48000/2
               // But here we just want to ensure we don't reprocess
               session.lastProcessedSegment = Math.max(session.lastProcessedSegment, segmentIndex);
               
-              // Cleanup audio file
-              if (this.config.enableCleanup) {
-                await this.cleanupAudioFile(audioFilePath);
-              }
+              // Audio files are no longer cleaned up (enableCleanup is false)
+              // Keep audio files for later access and archival
             }
           } finally {
             session.processingSegments.delete(segmentIndex);
@@ -431,7 +470,7 @@ a=rtpmap:100 opus/48000/2
   }
 
   /**
-   * Process audio file with Whisper.cpp
+   * Process audio file with self-hosted Whisper model
    */
   private async processWithWhisper(
     filePath: string, 
@@ -440,54 +479,104 @@ a=rtpmap:100 opus/48000/2
     segmentNumber: number
   ): Promise<TranscriptionSegment | null> {
     return new Promise((resolve) => {
-      // Whisper.cpp command
-      const whisperArgs = [
-        '-m', this.config.whisperModelPath,
-        '-f', filePath,
-        '-l', this.config.language === 'auto' ? 'auto' : this.config.language,
-        '--output-txt',
-        '--no-timestamps' // We'll use our own timestamps
-      ];
-
-      this.logger.log(`Running Whisper: ${this.config.whisperBinaryPath} ${whisperArgs.join(' ')}`);
-
-      const whisperProcess = spawn(this.config.whisperBinaryPath, whisperArgs);
-      let output = '';
-      let errorOutput = '';
-
-      whisperProcess.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      whisperProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      whisperProcess.on('close', (code) => {
-        if (code === 0 && output.trim()) {
-          const transcription: TranscriptionSegment = {
-            participantId,
-            roomId,
-            text: output.trim(),
-            confidence: 0.8, // Default confidence, Whisper doesn't always provide this
-            language: this.detectLanguage(output.trim()),
-            timestamp: new Date(),
-            segmentNumber,
-            duration: this.config.segmentDuration
-          };
-          
-          this.logger.log(`Transcription completed for ${participantId} segment ${segmentNumber}: "${transcription.text.substring(0, 50)}..."`);
-          resolve(transcription);
-        } else {
-          this.logger.error(`Whisper failed with code ${code}. Error: ${errorOutput}`);
+      try {
+        // Check if audio file exists
+        if (!require('fs').existsSync(filePath)) {
+          this.logger.error(`Audio file not found: ${filePath}`);
           resolve(null);
+          return;
         }
-      });
 
-      whisperProcess.on('error', (error) => {
-        this.logger.error(`Whisper process error:`, error);
+        this.logger.log(`Processing audio with self-hosted Whisper: ${filePath}`);
+
+        // Build Python command arguments (use absolute path for audio file)
+        const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+        const args = [
+          absoluteFilePath,
+          '--model', this.config.whisperModel,
+          '--device', this.config.whisperDevice,
+          '--compute-type', this.config.whisperComputeType
+        ];
+
+        // Add language parameter if not auto
+        if (this.config.language !== 'auto') {
+          args.push('--language', this.config.language);
+        }
+
+        this.logger.debug(`Running Whisper command: ${this.config.whisperScriptPath} ${args.join(' ')}`);
+
+        // Spawn Whisper process using wrapper script
+        const whisperProcess = spawn(this.config.whisperScriptPath, args, {
+          cwd: path.dirname(this.config.whisperScriptPath)
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        whisperProcess.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        whisperProcess.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        whisperProcess.on('close', (code) => {
+          if (code === 0 && stdout.trim()) {
+            try {
+              // Parse JSON response from Python script
+              const result = JSON.parse(stdout);
+              
+              if (result.success && result.text && result.text.trim()) {
+                const transcription: TranscriptionSegment = {
+                  participantId,
+                  roomId,
+                  text: result.text.trim(),
+                  confidence: result.confidence || 0.8,
+                  language: this.detectLanguage(result.text.trim()),
+                  timestamp: new Date(),
+                  segmentNumber,
+                  duration: result.duration || this.config.segmentDuration
+                };
+                
+                this.logger.log(`Self-hosted Whisper transcription completed for ${participantId} segment ${segmentNumber}: "${transcription.text.substring(0, 50)}..."`);
+                resolve(transcription);
+              } else {
+                this.logger.warn(`Empty or failed transcription result for ${participantId} segment ${segmentNumber}: ${result.error || 'No text found'}`);
+                resolve(null);
+              }
+            } catch (parseError) {
+              this.logger.error(`Failed to parse Whisper response for ${participantId} segment ${segmentNumber}: ${parseError}`);
+              this.logger.debug(`Raw stdout: ${stdout}`);
+              resolve(null);
+            }
+          } else {
+            this.logger.error(`Whisper process failed with code ${code} for ${participantId} segment ${segmentNumber}`);
+            if (stderr) {
+              this.logger.error(`Whisper stderr: ${stderr}`);
+            }
+            resolve(null);
+          }
+        });
+
+        whisperProcess.on('error', (error) => {
+          this.logger.error(`Whisper process error for ${participantId} segment ${segmentNumber}:`, error);
+          resolve(null);
+        });
+
+        // Set timeout for long-running processes
+        setTimeout(() => {
+          if (!whisperProcess.killed) {
+            this.logger.warn(`Whisper process timeout for ${participantId} segment ${segmentNumber}, killing process`);
+            whisperProcess.kill('SIGTERM');
+            resolve(null);
+          }
+        }, 60000); // 60 second timeout
+
+      } catch (error) {
+        this.logger.error(`Error in processWithWhisper for ${participantId} segment ${segmentNumber}:`, error);
         resolve(null);
-      });
+      }
     });
   }
 
@@ -620,14 +709,15 @@ a=rtpmap:100 opus/48000/2
   }
 
   /**
-   * Initialize transcript directory
+   * Initialize base audio and transcript directories
    */
-  private async initializeTranscriptDirectory(): Promise<void> {
+  private async initializeBaseDirectories(): Promise<void> {
     try {
+      await fs.mkdir(this.config.audioDir, { recursive: true });
       await fs.mkdir(this.config.transcriptDir, { recursive: true });
-      this.logger.log(`Transcript directory initialized: ${this.config.transcriptDir}`);
+      this.logger.log(`Base directories initialized: ${this.config.audioDir}, ${this.config.transcriptDir}`);
     } catch (error) {
-      this.logger.error('Failed to create transcript directory:', error);
+      this.logger.error('Failed to create base directories:', error);
     }
   }
 
@@ -645,6 +735,9 @@ a=rtpmap:100 opus/48000/2
         return;
       }
 
+      // Initialize room transcript directory
+      await this.initializeRoomTranscriptDirectory(roomId);
+
       // Create transcript data structure
       const transcriptData = {
         roomId,
@@ -657,8 +750,9 @@ a=rtpmap:100 opus/48000/2
 
       // Generate filename with timestamp
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `${roomId}_${participantId}_${timestamp}.json`;
-      const filepath = path.join(this.config.transcriptDir, filename);
+      const filename = `${participantId}_${timestamp}.json`;
+      const roomTranscriptDir = this.getRoomTranscriptDir(roomId);
+      const filepath = path.join(roomTranscriptDir, filename);
 
       // Save to file
       await fs.writeFile(filepath, JSON.stringify(transcriptData, null, 2), 'utf-8');
@@ -685,6 +779,9 @@ a=rtpmap:100 opus/48000/2
         return;
       }
 
+      // Initialize room transcript directory
+      await this.initializeRoomTranscriptDirectory(roomId);
+
       // Group transcriptions by participant
       const participantsMap = new Map<string, typeof roomTranscriptions>();
       roomTranscriptions.forEach(t => {
@@ -694,7 +791,7 @@ a=rtpmap:100 opus/48000/2
         participantsMap.get(t.participantId)!.push(t);
       });
 
-      // Save transcript for each participant
+      // Save transcript for each participant (only if they haven't been saved already)
       const savePromises = Array.from(participantsMap.keys()).map(participantId => 
         this.saveParticipantTranscript(participantId, roomId)
       );
