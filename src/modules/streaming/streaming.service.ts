@@ -14,6 +14,7 @@ import { TransportService } from '@/modules/transport/transport.service';
 import { MediaService } from '@/modules/multimedia/media.service';
 import { WorkerManagerService } from '@/modules/processor/worker.service';
 import { StreamingGateway } from './streaming.gateway';
+import { StreamingSTTService } from './streaming-stt.service';
 import { TransportRequestDto } from '../transport/transport.types';
 import appConfig from '@/config/app.config';
 import { SocketHelpersUtil } from 'utils';
@@ -33,6 +34,7 @@ export class StreamingService {
     private readonly workerManager: WorkerManagerService,
     private readonly lockService: DistributedLockService,
     private readonly activeSpeakersService: ActiveSpeakersService,
+    private readonly sttService: StreamingSTTService,
     @Inject(forwardRef(() => StreamingGateway)) private readonly streamingGateway: StreamingGateway
   ) {}
 
@@ -48,6 +50,14 @@ export class StreamingService {
       const producerIds = Object.values(client.producer)
         .filter((p): p is mediasoup.types.Producer => !!p)
         .map(p => p.id);
+
+      // STOP STT TRANSCRIPTION for this participant
+      try {
+        this.logger.log(`Stopping STT for participant ${client.userId}`);
+        await this.sttService.stopTranscription(client.userId);
+      } catch (error) {
+        this.logger.error(`Failed to stop STT for ${client.userId}:`, error);
+      }
 
       if (producerIds.length > 0) {
         room.activeSpeakerList = room.activeSpeakerList.filter(
@@ -115,6 +125,14 @@ export class StreamingService {
       // If room is empty after removal, cleanup and remove
       if (room.clients.length === 0) {
         this.logger.log(`Room ${roomId} is empty, cleaning up`);
+        
+        // Clear STT transcriptions for the room
+        try {
+          this.sttService.clearRoomTranscriptions(roomId);
+        } catch (error) {
+          this.logger.error(`Failed to clear STT transcriptions for room ${roomId}:`, error);
+        }
+        
         // Decrement router count
         if (workerPid !== -1) {
           this.workerManager.incRouters(workerPid, -1);
@@ -234,6 +252,17 @@ export class StreamingService {
     if (!client.room) throw new Error('Client not in a room');
     const producerId = await this.mediaService.startProducing(client, data);
 
+    // START STT TRANSCRIPTION FOR AUDIO PRODUCERS
+    if (data.kind === 'audio') {
+      try {
+        this.logger.log(`Starting STT for audio producer ${producerId} from ${client.userId}`);
+        await this.sttService.startTranscription(client, producerId);
+      } catch (error) {
+        this.logger.error(`Failed to start STT for ${client.userId}:`, error);
+        // Don't fail the entire producer creation if STT fails
+      }
+    }
+
     // Broadcast new producer to other clients in the room
     const newProducerData = {
       participantId: client.userId,
@@ -281,6 +310,10 @@ export class StreamingService {
     data: UnpauseConsumerData
   ): Promise<string> {
     return this.mediaService.unpauseConsumer(client, data);
+  }
+
+  async getRoomTranscriptions(roomId: string) {
+    return this.sttService.getTranscriptions(roomId);
   }
 
   // --------------------------------------------------------

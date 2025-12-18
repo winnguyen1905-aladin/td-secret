@@ -21,7 +21,6 @@ import {
 } from '@/modules/streaming/interfaces/streaming-events.interface';
 import { TransportRequestDto } from '../transport/transport.types';
 import { Client } from '@/models';
-import { randomUUID } from 'crypto';
 
 @WebSocketGateway({
   namespace: '',
@@ -227,6 +226,20 @@ export class StreamingGateway extends CallBaseGateway implements OnGatewayInit, 
     } catch (error) {
       this.logger.error('Error unpausing consumer:', error);
       return 'error';
+    }
+  }
+
+  @SubscribeMessage('getTranscriptions')
+  async getTranscriptions(@ConnectedSocket() socket: AuthenticatedSocket) {
+    try {
+      const client = this.extractClientFromSocket(socket);
+      if (!client.room) {
+        return { error: 'Not in a room' };
+      }
+      return await this.callService.getRoomTranscriptions(client.room.roomId);
+    } catch (error) {
+      this.logger.error('Error getting transcriptions:', error);
+      return [];
     }
   }
 
