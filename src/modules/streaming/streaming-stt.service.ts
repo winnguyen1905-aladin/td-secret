@@ -41,6 +41,7 @@ export interface RTPSession {
 export interface STTConfig {
   segmentDuration: number; // seconds
   audioDir: string;
+  transcriptDir: string; // Directory to save transcript files
   whisperBinaryPath: string;
   whisperModelPath: string;
   language: 'vi' | 'en' | 'auto';
@@ -68,9 +69,10 @@ export class StreamingSTTService {
   private config: STTConfig = {
     segmentDuration: 6, // 6 seconds for faster testing (was 60)
     audioDir: './temp/audio-segments',
+    transcriptDir: './temp/transcripts',
     whisperBinaryPath: '/home/loi/whisper.cpp/whisper.cpp/build/bin/whisper-cli',
     whisperModelPath: '/home/loi/whisper.cpp/whisper.cpp/ggml-base.bin',
-    language: 'auto',
+    language: 'vi',
     enableCleanup: true
   };
 
@@ -79,6 +81,7 @@ export class StreamingSTTService {
     private readonly streamingGateway: StreamingGateway
   ) {
     this.initializeAudioDirectory();
+    this.initializeTranscriptDirectory();
     this.initializeFileWatcher();
     this.initializePortPool();
   }
@@ -613,6 +616,95 @@ a=rtpmap:100 opus/48000/2
       this.usedPorts.delete(port);
       this.availablePorts.add(port);
       this.logger.debug(`Released RTP port ${port} back to pool`);
+    }
+  }
+
+  /**
+   * Initialize transcript directory
+   */
+  private async initializeTranscriptDirectory(): Promise<void> {
+    try {
+      await fs.mkdir(this.config.transcriptDir, { recursive: true });
+      this.logger.log(`Transcript directory initialized: ${this.config.transcriptDir}`);
+    } catch (error) {
+      this.logger.error('Failed to create transcript directory:', error);
+    }
+  }
+
+  /**
+   * Save transcriptions for a participant when they leave the room
+   */
+  async saveParticipantTranscript(participantId: string, roomId: string): Promise<void> {
+    try {
+      // Get all transcriptions for this participant in the room
+      const roomTranscriptions = this.transcriptions.get(roomId) || [];
+      const participantTranscriptions = roomTranscriptions.filter(t => t.participantId === participantId);
+      
+      if (participantTranscriptions.length === 0) {
+        this.logger.log(`No transcriptions to save for participant ${participantId} in room ${roomId}`);
+        return;
+      }
+
+      // Create transcript data structure
+      const transcriptData = {
+        roomId,
+        participantId,
+        sessionStartTime: participantTranscriptions[0].timestamp,
+        sessionEndTime: participantTranscriptions[participantTranscriptions.length - 1].timestamp,
+        totalSegments: participantTranscriptions.length,
+        segments: participantTranscriptions
+      };
+
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `${roomId}_${participantId}_${timestamp}.json`;
+      const filepath = path.join(this.config.transcriptDir, filename);
+
+      // Save to file
+      await fs.writeFile(filepath, JSON.stringify(transcriptData, null, 2), 'utf-8');
+      
+      this.logger.log(`Saved transcript for participant ${participantId} to ${filepath}`);
+      
+      // TODO: Later - Save to database
+      // await this.saveTranscriptToDatabase(transcriptData);
+      
+    } catch (error) {
+      this.logger.error(`Failed to save transcript for participant ${participantId}:`, error);
+    }
+  }
+
+  /**
+   * Save all transcriptions for a room when it ends
+   */
+  async saveRoomTranscript(roomId: string): Promise<void> {
+    try {
+      const roomTranscriptions = this.transcriptions.get(roomId) || [];
+      
+      if (roomTranscriptions.length === 0) {
+        this.logger.log(`No transcriptions to save for room ${roomId}`);
+        return;
+      }
+
+      // Group transcriptions by participant
+      const participantsMap = new Map<string, typeof roomTranscriptions>();
+      roomTranscriptions.forEach(t => {
+        if (!participantsMap.has(t.participantId)) {
+          participantsMap.set(t.participantId, []);
+        }
+        participantsMap.get(t.participantId)!.push(t);
+      });
+
+      // Save transcript for each participant
+      const savePromises = Array.from(participantsMap.keys()).map(participantId => 
+        this.saveParticipantTranscript(participantId, roomId)
+      );
+      
+      await Promise.all(savePromises);
+      
+      this.logger.log(`Saved all transcripts for room ${roomId}`);
+      
+    } catch (error) {
+      this.logger.error(`Failed to save room transcripts for ${roomId}:`, error);
     }
   }
 

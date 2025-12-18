@@ -55,6 +55,9 @@ export class StreamingService {
       try {
         this.logger.log(`Stopping STT for participant ${client.userId}`);
         await this.sttService.stopTranscription(client.userId);
+        
+        // SAVE TRANSCRIPT for this participant when leaving
+        await this.sttService.saveParticipantTranscript(client.userId, roomId);
       } catch (error) {
         this.logger.error(`Failed to stop STT for ${client.userId}:`, error);
       }
@@ -126,11 +129,12 @@ export class StreamingService {
       if (room.clients.length === 0) {
         this.logger.log(`Room ${roomId} is empty, cleaning up`);
         
-        // Clear STT transcriptions for the room
+        // Save all room transcripts before clearing
         try {
+          await this.sttService.saveRoomTranscript(roomId);
           this.sttService.clearRoomTranscriptions(roomId);
         } catch (error) {
-          this.logger.error(`Failed to clear STT transcriptions for room ${roomId}:`, error);
+          this.logger.error(`Failed to save/clear STT transcriptions for room ${roomId}:`, error);
         }
         
         // Decrement router count
