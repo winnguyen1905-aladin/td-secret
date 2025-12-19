@@ -14,7 +14,7 @@ import { TransportService } from '@/modules/transport/transport.service';
 import { MediaService } from '@/modules/multimedia/media.service';
 import { WorkerManagerService } from '@/modules/processor/worker.service';
 import { StreamingGateway } from './streaming.gateway';
-import { StreamingSTTService } from './streaming-stt.service';
+import { StreamingAudioCaptureService } from './streaming-audio-capture.service';
 import { TransportRequestDto } from '../transport/transport.types';
 import appConfig from '@/config/app.config';
 import { SocketHelpersUtil } from 'utils';
@@ -34,7 +34,7 @@ export class StreamingService {
     private readonly workerManager: WorkerManagerService,
     private readonly lockService: DistributedLockService,
     private readonly activeSpeakersService: ActiveSpeakersService,
-    private readonly sttService: StreamingSTTService,
+    private readonly audioCaptureService: StreamingAudioCaptureService,
     @Inject(forwardRef(() => StreamingGateway)) private readonly streamingGateway: StreamingGateway
   ) {}
 
@@ -51,15 +51,12 @@ export class StreamingService {
         .filter((p): p is mediasoup.types.Producer => !!p)
         .map(p => p.id);
 
-      // STOP STT TRANSCRIPTION for this participant
+      // STOP AUDIO CAPTURE for this participant
       try {
-        this.logger.log(`Stopping STT for participant ${client.userId}`);
-        await this.sttService.stopTranscription(client.userId);
-        
-        // SAVE TRANSCRIPT for this participant when leaving
-        await this.sttService.saveParticipantTranscript(client.userId, roomId);
+        this.logger.log(`Stopping audio capture for participant ${client.userId}`);
+        await this.audioCaptureService.stopAudioCapture(client.userId);
       } catch (error) {
-        this.logger.error(`Failed to stop STT for ${client.userId}:`, error);
+        this.logger.error(`Failed to stop audio capture for ${client.userId}:`, error);
       }
 
       if (producerIds.length > 0) {
@@ -129,13 +126,8 @@ export class StreamingService {
       if (room.clients.length === 0) {
         this.logger.log(`Room ${roomId} is empty, cleaning up`);
         
-        // Save all room transcripts before clearing
-        try {
-          await this.sttService.saveRoomTranscript(roomId);
-          this.sttService.clearRoomTranscriptions(roomId);
-        } catch (error) {
-          this.logger.error(`Failed to save/clear STT transcriptions for room ${roomId}:`, error);
-        }
+        // Audio files are saved automatically by the capture service
+        this.logger.log(`Audio files for room ${roomId} are saved in temp/audio-segments/${roomId}`);
         
         // Decrement router count
         if (workerPid !== -1) {
@@ -259,11 +251,11 @@ export class StreamingService {
     // START STT TRANSCRIPTION FOR AUDIO PRODUCERS
     if (data.kind === 'audio') {
       try {
-        this.logger.log(`Starting STT for audio producer ${producerId} from ${client.userId}`);
-        await this.sttService.startTranscription(client, producerId);
+        this.logger.log(`Starting audio capture for audio producer ${producerId} from ${client.userId}`);
+        await this.audioCaptureService.startAudioCapture(client, producerId);
       } catch (error) {
-        this.logger.error(`Failed to start STT for ${client.userId}:`, error);
-        // Don't fail the entire producer creation if STT fails
+        this.logger.error(`Failed to start audio capture for ${client.userId}:`, error);
+        // Don't fail the entire producer creation if audio capture fails
       }
     }
 
@@ -316,8 +308,8 @@ export class StreamingService {
     return this.mediaService.unpauseConsumer(client, data);
   }
 
-  async getRoomTranscriptions(roomId: string) {
-    return this.sttService.getTranscriptions(roomId);
+  async getActiveAudioSessions() {
+    return this.audioCaptureService.getActiveSessions();
   }
 
   // --------------------------------------------------------

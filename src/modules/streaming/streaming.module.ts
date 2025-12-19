@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { StreamingGateway } from './streaming.gateway';
 import { StreamingService } from './streaming.service';
-import { StreamingSTTService } from './streaming-stt.service';
+import { StreamingAudioCaptureService } from './streaming-audio-capture.service';
 import { RedisModule } from '@/modules/distributed-cache/redis.module';
 import { TransportModule } from '@/modules/transport/transport.module';
 import { MediaModule } from '@/modules/multimedia/media.module';
@@ -16,7 +16,7 @@ import { ModelsModule } from '@/models/models.module';
     forwardRef(() => ModelsModule),
     WorkerModule,
   ],
-  providers: [StreamingGateway, StreamingService, StreamingSTTService],
-  exports: [StreamingGateway, StreamingService, StreamingSTTService],
+  providers: [StreamingGateway, StreamingService, StreamingAudioCaptureService],
+  exports: [StreamingGateway, StreamingService, StreamingAudioCaptureService],
 })
 export class StreamingModule {}

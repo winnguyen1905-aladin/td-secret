@@ -10,6 +10,7 @@ import { WorkerModule } from './modules/processor/worker.module';
 import { TransportModule } from './modules/transport/transport.module';
 import { MediaModule } from './modules/multimedia/media.module';
 import { ModelsModule } from './models/models.module';
+import { TranscriptModule } from './modules/transcript/transcript.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ModelsModule } from './models/models.module';
     AuthModule,
     MessagingModule,
     StreamingModule,
+    TranscriptModule,
   ],
 })
 export class AppModule {}

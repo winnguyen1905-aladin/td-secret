@@ -229,20 +229,6 @@ export class StreamingGateway extends CallBaseGateway implements OnGatewayInit, 
     }
   }
 
-  @SubscribeMessage('getTranscriptions')
-  async getTranscriptions(@ConnectedSocket() socket: AuthenticatedSocket) {
-    try {
-      const client = this.extractClientFromSocket(socket);
-      if (!client.room) {
-        return { error: 'Not in a room' };
-      }
-      return await this.callService.getRoomTranscriptions(client.room.roomId);
-    } catch (error) {
-      this.logger.error('Error getting transcriptions:', error);
-      return [];
-    }
-  }
-
   // ============================================================
   // JOIN REQUEST / MODERATION HANDLERS
   // ============================================================

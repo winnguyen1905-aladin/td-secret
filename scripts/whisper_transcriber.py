@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Self-hosted Whisper transcription script
-Requires: faster-whisper, torch, torchaudio
-Install with: python3 -m pip install faster-whisper torch torchaudio
+Uses faster-whisper for optimal performance
 """
 
 import sys
@@ -18,12 +17,12 @@ except ImportError:
     sys.exit(1)
 
 class WhisperTranscriber:
-    def __init__(self, model_size="large-v3", device="cpu", compute_type="float32"):
+    def __init__(self, model_size="base", device="cpu", compute_type="float32"):
         """
         Initialize the Whisper transcriber
         
         Args:
-            model_size: "tiny", "base", "small", "medium", "large-v2", "large-v3"
+            model_size: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3"
             device: "cpu", "cuda", "auto"
             compute_type: "int8", "int16", "float16", "float32"
         """
@@ -49,57 +48,61 @@ class WhisperTranscriber:
     
     def transcribe(self, audio_file_path, language=None):
         """
-        Transcribe audio file
+        Transcribe audio file and return structured result
+        
         Args:
-            audio_file_path: Path to audio file
-            language: Language code (e.g., 'vi', 'en') or None for auto-detection  
+            audio_file_path: Path to the audio file
+            language: Language code (e.g., 'vi', 'en') or None for auto-detection
+            
         Returns:
-            dict: Transcription result with text, language, confidence, etc.
+            Dict with transcription results
         """
         try:
-            if not os.path.exists(audio_file_path):
-                raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
-            
             print(f"Transcribing: {audio_file_path}", file=sys.stderr)
             
-            # Transcribe with faster-whisper
+            # Set up transcription parameters
             segments, info = self.model.transcribe(
-                audio_file_path,
-                language=language,
+                audio_file_path, 
+                language=language if language and language != 'auto' else None,
                 beam_size=5,
-                word_timestamps=True
+                best_of=5,
+                temperature=0.0
             )
             
-            # Collect segments
+            # Convert segments to list and calculate metrics
+            segments_list = list(segments)  # Convert generator to list first
             transcription_segments = []
             full_text = ""
-            total_duration = 0
-            avg_confidence = 0
+            total_duration = 0.0
+            confidence_sum = 0.0
             segment_count = 0
             
-            for segment in segments:
-                segment_text = segment.text.strip()
-                if segment_text:  # Only include non-empty segments
-                    full_text += segment_text + " "
-                    total_duration = max(total_duration, segment.end)
-                    avg_confidence += segment.avg_logprob
-                    segment_count += 1
-                    
-                    transcription_segments.append({
+            print(f"Processing {len(segments_list)} segments", file=sys.stderr)
+            
+            if len(segments_list) == 0:
+                # Handle case where no speech is detected
+                print("No speech detected in audio file", file=sys.stderr)
+                total_duration = info.duration if hasattr(info, 'duration') else 30.0
+            else:
+                for segment in segments_list:
+                    segment_data = {
                         "start": segment.start,
                         "end": segment.end,
-                        "text": segment_text,
+                        "text": segment.text.strip(),
                         "avg_logprob": segment.avg_logprob,
                         "no_speech_prob": segment.no_speech_prob
-                    })
+                    }
+                    transcription_segments.append(segment_data)
+                    full_text += segment.text
+                    total_duration = max(total_duration, segment.end)
+                    
+                    # Calculate confidence from avg_logprob (convert from log space)
+                    segment_confidence = min(1.0, max(0.0, (segment.avg_logprob + 1.0)))
+                    confidence_sum += segment_confidence
+                    segment_count += 1
             
-            # Calculate average confidence
-            if segment_count > 0:
-                avg_confidence = avg_confidence / segment_count
-                # Convert log probability to confidence (0-1)
-                confidence = min(1.0, max(0.0, (avg_confidence + 5) / 5))  # Approximate conversion
-            else:
-                confidence = 0.0
+            # Calculate overall confidence
+            confidence = confidence_sum / segment_count if segment_count > 0 else 0.0
             
             result = {
                 "text": full_text.strip(),
@@ -118,7 +121,7 @@ class WhisperTranscriber:
             print(f"Transcription error: {e}", file=sys.stderr)
             return {
                 "text": "",
-                "language": "unknown",
+                "language": language or "unknown",
                 "language_probability": 0.0,
                 "duration": 0,
                 "confidence": 0.0,
@@ -130,14 +133,29 @@ class WhisperTranscriber:
 def main():
     parser = argparse.ArgumentParser(description='Transcribe audio using Whisper')
     parser.add_argument('audio_file', help='Path to audio file')
-    parser.add_argument('--model', default='base', help='Whisper model size (tiny, base, small, medium, large-v2, large-v3)')
-    parser.add_argument('--language', help='Language code (e.g., vi, en)')
-    parser.add_argument('--device', default='cpu', help='Device (cpu, cuda, auto)')
-    parser.add_argument('--compute-type', default='int8', help='Compute type (int8, int16, float16, float32)')
+    parser.add_argument('--model', default='base', 
+                       choices=['tiny', 'base', 'small', 'medium', 'large', 'large-v2', 'large-v3'],
+                       help='Whisper model to use')
+    parser.add_argument('--language', default='auto', 
+                       help='Language code (auto for auto-detection)')
+    parser.add_argument('--output_format', default='json', 
+                       choices=['json', 'text'],
+                       help='Output format')
+    parser.add_argument('--device', default='cpu',
+                       choices=['cpu', 'cuda', 'auto'],
+                       help='Device to use')
+    parser.add_argument('--compute_type', default='float32',
+                       choices=['int8', 'int16', 'float16', 'float32'],
+                       help='Compute type for inference')
     
     args = parser.parse_args()
     
-    # Create transcriber
+    # Validate input file
+    if not os.path.exists(args.audio_file):
+        print(f"Error: Audio file not found: {args.audio_file}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Initialize transcriber
     transcriber = WhisperTranscriber(
         model_size=args.model,
         device=args.device,
@@ -145,10 +163,17 @@ def main():
     )
     
     # Transcribe
-    result = transcriber.transcribe(args.audio_file, args.language)
+    language = args.language if args.language != 'auto' else None
+    result = transcriber.transcribe(args.audio_file, language=language)
     
-    # Output JSON result
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    # Output result
+    if args.output_format == 'json':
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(result.get("text", ""))
+    
+    # Exit with appropriate code
+    sys.exit(0 if result["success"] else 1)
 
 if __name__ == "__main__":
     main()
