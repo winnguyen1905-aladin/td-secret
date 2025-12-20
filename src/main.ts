@@ -11,6 +11,7 @@ async function bootstrap() {
 
   app.use(helmet());
   app.enableShutdownHooks();
+  app.enableCors();
   
   // Enable global validation pipe
   app.useGlobalPipes(

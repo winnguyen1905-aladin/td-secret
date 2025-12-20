@@ -61,15 +61,31 @@ export abstract class BaseGateway
     }
 
     clearTimeout(timeout);
-    socket.data.authenticated = true;
     socket.data.user = result.user;
+    socket.data.authenticated = true;
     (socket as AuthenticatedSocket).userInfo = result.user;
 
     // Cache user <-> socket mapping
     try {
+      const socketIds = await this.userSessionCache.getSocketIdsByUser(result.user.sub);
+      for (const socketId of socketIds) {
+        await this.userSessionCache.unmapSocket(socketId);
+        try {
+          // Use adapter-aware API to disconnect sockets by id (works across Redis clusters)
+          this.server?.in(socketId).disconnectSockets(true);
+        } catch (disconnectError) {
+          this.logger.warn(
+            `Failed to disconnect stale socket ${socketId}: ${
+              disconnectError instanceof Error ? disconnectError.message : String(disconnectError)
+            }`,
+          );
+        }
+      }
       await this.userSessionCache.mapUserToSocket(result.user.sub, socket.id);
     } catch (e) {
+      socket.disconnect(true);
       this.logError('Failed to cache user-session mapping', e, socket);
+      throw e;
     }
 
     // Fetch user jobs and join corresponding rooms
@@ -79,23 +95,13 @@ export abstract class BaseGateway
         throw new Error('JOBS_SERVICE_URL or JOBS_SERVICE_URL is not configured');
       }
 
-      const jobIds = await getUserJobs({
-        baseUrl,
-        userId: result.user.sub,
-        token: token!,
-      });
-
-      const roomIds = filterValidRoomIds(jobIds || []);
+      const roomIds = await getUserJobs({baseUrl, userId: result.user.sub, token: token!})
 
       // Persist rooms in cache for the user
-      if (roomIds.length) {
-        await this.userSessionCache.addUserRooms(result.user.sub, roomIds);
-      }
+      await this.userSessionCache.addUserRooms(result.user.sub, roomIds);
 
       // Join all rooms
-      for (const roomId of roomIds) {
-        await this.joinRoom(socket, roomId);
-      }
+      await this.joinRooms(socket, roomIds);
 
       this.logger.log(`User ${result.user.sub} joined ${roomIds.length} rooms`);
     } catch (e) {
@@ -105,20 +111,20 @@ export abstract class BaseGateway
       throw new Error(errorMessage);
     }
 
-    await this.onAuthenticated(socket as AuthenticatedSocket, result.user);
+    // await this.onAuthenticated(socket as AuthenticatedSocket, result.user);
     this.logger.log(`Connected: ${result.user.sub} [${socket.id}]`);
   }
 
-  handleDisconnect(socket: Socket): void {
+  async handleDisconnect(socket: AuthenticatedSocket): Promise<void> {
     if (socket.data?.authTimeout) clearTimeout(socket.data.authTimeout);
-    const user = (socket as AuthenticatedSocket).userInfo;
-    if (user) this.onUserDisconnect(socket as AuthenticatedSocket, user);
+    await this.userSessionCache.unmapSocket(socket.id);
+    // if (user) this.onUserDisconnect(socket, user);
     this.logger.log(`Disconnected [${socket.id}]`);
   }
 
   // Override in subclass
-  protected async onAuthenticated(_socket: AuthenticatedSocket, _user: JwtUser): Promise<void> {}
-  protected onUserDisconnect(_socket: AuthenticatedSocket, _user: JwtUser): void {}
+  // protected async onAuthenticated(_socket: AuthenticatedSocket, _user: JwtUser): Promise<void> {}
+  // protected onUserDisconnect(_socket: AuthenticatedSocket, _user: JwtUser): void {}
 
   protected logError(message: string, error: unknown, socket?: Socket): void {
     const socketInfo = socket ? ` [${socket.id}]` : '';
@@ -140,6 +146,10 @@ export abstract class BaseGateway
 
   protected async joinRoom(socket: Socket, roomId: string): Promise<void> {
     await socket.join(roomId);
+  }
+
+  protected async joinRooms(socket: Socket, roomIds: string[]): Promise<void> {
+    await socket.join(roomIds);
   }
 
   protected async leaveRoom(socket: Socket, roomId: string): Promise<void> {

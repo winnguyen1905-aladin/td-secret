@@ -3,9 +3,10 @@ import { Injectable, Inject } from "@nestjs/common";
 
 @Injectable()
 export class UserSessionCacheService {
-	private readonly USER_SOCKETS_KEY_PREFIX = "user:sockets:";
-	private readonly SOCKET_USER_KEY_PREFIX = "socket:user:";
+
 	private readonly USER_ROOMS_KEY_PREFIX = "user:rooms:";
+	private readonly SOCKET_USER_KEY_PREFIX = "socket:user:";
+	private readonly USER_SOCKETS_KEY_PREFIX = "user:sockets:";
 
 	constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
