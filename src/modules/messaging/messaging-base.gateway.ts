@@ -71,14 +71,10 @@ export abstract class BaseGateway
       for (const socketId of socketIds) {
         await this.userSessionCache.unmapSocket(socketId);
         try {
-          // Use adapter-aware API to disconnect sockets by id (works across Redis clusters)
-          this.server?.in(socketId).disconnectSockets(true);
+          this.disconnectSocketById(socketId);
         } catch (disconnectError) {
-          this.logger.warn(
-            `Failed to disconnect stale socket ${socketId}: ${
-              disconnectError instanceof Error ? disconnectError.message : String(disconnectError)
-            }`,
-          );
+          this.logger.warn(`Failed to disconnect stale socket ${socketId}: ${
+              disconnectError instanceof Error ? disconnectError.message : String(disconnectError)}`);
         }
       }
       await this.userSessionCache.mapUserToSocket(result.user.sub, socket.id);
@@ -118,7 +114,6 @@ export abstract class BaseGateway
   async handleDisconnect(socket: AuthenticatedSocket): Promise<void> {
     if (socket.data?.authTimeout) clearTimeout(socket.data.authTimeout);
     await this.userSessionCache.unmapSocket(socket.id);
-    // if (user) this.onUserDisconnect(socket, user);
     this.logger.log(`Disconnected [${socket.id}]`);
   }
 
@@ -171,6 +166,22 @@ export abstract class BaseGateway
     if (typeof a === 'string' && a) return a;
 
     return undefined;
+  }
+
+  protected disconnectSocketById(socketId: string): void {
+    const directMap =
+      this.server?.sockets && this.server.sockets instanceof Map
+        ? (this.server.sockets as Map<string, Socket>)
+        : undefined;
+
+    const localSocket = directMap?.get(socketId);
+    if (localSocket) {
+      localSocket.disconnect(true);
+      return;
+    }
+
+    // Fallback: target by room name (each socket is in a room named by its id)
+    this.server?.in(socketId).disconnectSockets(true);
   }
 
   private async validateJwt(token?: string): Promise<{ valid: boolean; user?: JwtUser; error?: string }> {
