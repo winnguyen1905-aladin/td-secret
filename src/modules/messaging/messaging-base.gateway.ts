@@ -10,8 +10,7 @@ import * as jwt from 'jsonwebtoken';
 import { AuthenticatedSocket } from '../streaming/interfaces/streaming-events.interface';
 import { JwtUser } from './types';
 import { UserSessionCacheService } from '../distributed-cache/session.service';
-import { getUserJobs } from '../../../libs/apiClient';
-import { filterValidRoomIds } from '../../../utils/messaging.utils';
+import { getUserJobs } from '@libs/apiClient';
 import appConfig from '@/config/app.config';
 
 const AUTH_TIMEOUT_MS = 30000;
